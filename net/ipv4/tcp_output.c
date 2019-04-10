@@ -1129,23 +1129,27 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 
 	icsk->icsk_af_ops->send_check(sk, skb);
 
-	if (likely(tcb->tcp_flags & TCPHDR_ACK))
-		tcp_event_ack_sent(sk, tcp_skb_pcount(skb), rcv_nxt);
-
-	if (skb->len != tcp_header_size) {
-		tcp_event_data_sent(tp, sk);
-		update_tcp_total_segments(tcp_skb_pcount(skb), sk);
-		update_tcp_total_segment_size(skb->len - tcp_header_size, sk);
-		tp->data_segs_out += tcp_skb_pcount(skb);
-		tp->bytes_sent += skb->len - tcp_header_size;
-	}
-
-	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq)
-		TCP_ADD_STATS(sock_net(sk), TCP_MIB_OUTSEGS,
-			      tcp_skb_pcount(skb));
-
 	/* tcp packet send rate limit check */
-	if (rate_limit_check(sk, true, true, tcp_skb_pcount(skb))) {
+	/* allow pure acks to pass freely */
+	if (skb->len == tcp_header_size ||
+	    rate_limit_check(sk, true, true, tcp_skb_pcount(skb))) {
+		if (likely(tcb->tcp_flags & TCPHDR_ACK))
+			tcp_event_ack_sent(sk, tcp_skb_pcount(skb), rcv_nxt);
+
+		if (skb->len != tcp_header_size) {
+			tcp_event_data_sent(tp, sk);
+			update_tcp_total_segments(tcp_skb_pcount(skb), sk);
+			update_tcp_total_segment_size(
+				skb->len - tcp_header_size, sk);
+			tp->data_segs_out += tcp_skb_pcount(skb);
+			tp->bytes_sent += skb->len - tcp_header_size;
+		}
+
+		if (after(tcb->end_seq, tp->snd_nxt) ||
+		    tcb->seq == tcb->end_seq)
+			TCP_ADD_STATS(sock_net(sk), TCP_MIB_OUTSEGS,
+				      tcp_skb_pcount(skb));
+
 		/* Actual number of segments sent */
 		tp->segs_out += tcp_skb_pcount(skb);
 		/* Update our stats here */

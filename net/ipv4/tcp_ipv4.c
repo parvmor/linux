@@ -1885,16 +1885,23 @@ process:
 	sk_incoming_cpu_update(sk);
 
 	bh_lock_sock_nested(sk);
+	/* tcp packet rcvd rate limit check */
+	/* allow pure acks to pass freely */
 	rcvd_packets = max_t(u16, 1, skb_shinfo(skb)->gso_segs);
-	update_tcp_packets_rcvd(rcvd_packets, sk);
-	if (skb->len > tcp_hdrlen(skb))
-		update_tcp_data_segs_rcvd(rcvd_packets, sk);
-	tcp_segs_in(tcp_sk(sk), skb);
-	ret = 0;
-	if (!sock_owned_by_user(sk)) {
-		ret = tcp_v4_do_rcv(sk, skb);
-	} else if (tcp_add_backlog(sk, skb)) {
-		goto discard_and_relse;
+	if (skb->len == tcp_hdrlen(skb) ||
+	    rate_limit_check(sk, true, false, rcvd_packets)) {
+		update_tcp_packets_rcvd(rcvd_packets, sk);
+		if (skb->len > tcp_hdrlen(skb))
+			update_tcp_data_segs_rcvd(rcvd_packets, sk);
+		tcp_segs_in(tcp_sk(sk), skb);
+		ret = 0;
+		if (!sock_owned_by_user(sk)) {
+			ret = tcp_v4_do_rcv(sk, skb);
+		} else if (tcp_add_backlog(sk, skb)) {
+			goto discard_and_relse;
+		}
+	} else {
+		ret = 1;
 	}
 	bh_unlock_sock(sk);
 

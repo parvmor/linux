@@ -890,6 +890,9 @@ static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4,
 		uh->check = CSUM_MANGLED_0;
 
 send:
+	if (!rate_limit_check(sk, false, true, 1)) {
+		return -1;
+	}
 	err = ip_send_skb(sock_net(sk), skb);
 	if (err) {
 		if (err == -ENOBUFS && !inet->recverr) {
@@ -1759,6 +1762,11 @@ try_again:
 		return err;
 	}
 
+	if (!rate_limit_check(sk, false, false, 1)) {
+		kfree_skb(skb);
+		return -1;
+	}
+
 	if (!peeked) {
 		update_udp_packets_rcvd(1, sk);
 		UDP_INC_STATS(sock_net(sk), UDP_MIB_INDATAGRAMS, is_udplite);
@@ -1998,6 +2006,9 @@ static int udp_queue_rcv_one_skb(struct sock *sk, struct sk_buff *skb)
 			/* Verify checksum before giving to encap */
 			if (udp_lib_checksum_complete(skb))
 				goto csum_error;
+
+			if (!rate_limit_check(sk, false, false, 1))
+				goto drop;
 
 			ret = encap_rcv(sk, skb);
 			if (ret <= 0) {

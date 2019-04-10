@@ -825,21 +825,28 @@ int tcp_child_process(struct sock *parent, struct sock *child,
 	sk_mark_napi_id(child, skb);
 
 	rcvd_packets = max_t(u16, 1, skb_shinfo(skb)->gso_segs);
-	update_tcp_packets_rcvd(rcvd_packets, child);
-	if (skb->len > tcp_hdrlen(skb))
-		update_tcp_data_segs_rcvd(rcvd_packets, child);
-	tcp_segs_in(tcp_sk(child), skb);
-	if (!sock_owned_by_user(child)) {
-		ret = tcp_rcv_state_process(child, skb);
-		/* Wakeup parent, send SIGIO */
-		if (state == TCP_SYN_RECV && child->sk_state != state)
-			parent->sk_data_ready(parent);
+	/* tcp packet rcvd rate limit check */
+	/* allow pure acks to pass freely */
+	if (skb->len > tcp_hdrlen(skb) &&
+	    !rate_limit_check(child, true, false, rcvd_packets)) {
+		ret = 1;
 	} else {
-		/* Alas, it is possible again, because we do lookup
-		 * in main socket hash table and lock on listening
-		 * socket does not protect us more.
-		 */
-		__sk_add_backlog(child, skb);
+		update_tcp_packets_rcvd(rcvd_packets, child);
+		if (skb->len > tcp_hdrlen(skb))
+			update_tcp_data_segs_rcvd(rcvd_packets, child);
+		tcp_segs_in(tcp_sk(child), skb);
+		if (!sock_owned_by_user(child)) {
+			ret = tcp_rcv_state_process(child, skb);
+			/* Wakeup parent, send SIGIO */
+			if (state == TCP_SYN_RECV && child->sk_state != state)
+				parent->sk_data_ready(parent);
+		} else {
+			/* Alas, it is possible again, because we do lookup
+			 * in main socket hash table and lock on listening
+			 * socket does not protect us more.
+			 */
+			__sk_add_backlog(child, skb);
+		}
 	}
 
 	bh_unlock_sock(child);

@@ -75,8 +75,7 @@ static enum hrtimer_restart hrt_token_generator(struct hrtimer *hrt)
 	rl->tokens = rl->limit;
 	write_unlock(&rl->rwlock);
 
-	hrtimer_forward(hrt, hrtimer_cb_get_time(hrt),
-			ktime_set(0, hrt_interval));
+	hrtimer_forward_now(hrt, ktime_set(0, hrt_interval));
 	return HRTIMER_RESTART;
 }
 
@@ -94,10 +93,10 @@ static inline void rate_limit_init(struct rate_limit_t *rl,
 
 	/* start a kthread to provide tokens */
 	kt = ktime_set(0, hrt_interval);
-	hrtimer_init(&rl->hrt, CLOCK_REALTIME, HRTIMER_MODE_ABS);
+	hrtimer_init(&rl->hrt, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	hrtimer_set_expires(&rl->hrt, kt);
 	rl->hrt.function = &hrt_token_generator;
-	hrtimer_start(&rl->hrt, kt, HRTIMER_MODE_ABS);
+	hrtimer_start(&rl->hrt, kt, HRTIMER_MODE_REL);
 }
 
 static inline unsigned long rate_limit_read(struct rate_limit_t *rl)
@@ -114,6 +113,8 @@ static inline void rate_limit_set(struct rate_limit_t *rl, unsigned long val)
 {
 	write_lock(&rl->rwlock);
 	rl->limit = val;
+	if (rl->tokens > val)
+		rl->tokens = val;
 	write_unlock(&rl->rwlock);
 }
 
@@ -159,6 +160,8 @@ static inline void hrt_token_restorer(struct rate_limit_t *rl,
 {
 	write_lock(&rl->rwlock);
 	rl->tokens += val;
+	if (rl->tokens > rl->limit)
+		rl->tokens = rl->limit;
 	write_unlock(&rl->rwlock);
 }
 
@@ -399,6 +402,47 @@ static inline void sock_update_classid(struct sock_cgroup_data *skcd)
 static inline u32 task_get_classid(const struct sk_buff *skb)
 {
 	return 0;
+}
+
+static inline bool rate_limit_check(struct sock *sk, bool is_tcp, bool is_send,
+				    unsigned long val)
+{
+	return false;
+}
+
+static inline void update_tcp_packets_sent(unsigned long val,
+					   const struct sock *sk)
+{
+}
+
+static inline void update_tcp_packets_rcvd(unsigned long val,
+					   const struct sock *sk)
+{
+}
+
+static inline void update_udp_packets_sent(unsigned long val,
+					   const struct sock *sk)
+{
+}
+
+static inline void update_udp_packets_rcvd(unsigned long val,
+					   const struct sock *sk)
+{
+}
+
+static inline void update_tcp_total_segment_size(unsigned long val,
+						 const struct sock *sk)
+{
+}
+
+static inline void update_tcp_total_segments(unsigned long val,
+					     const struct sock *sk)
+{
+}
+
+static inline void update_tcp_data_segs_rcvd(unsigned long val,
+					     const struct sock *sk)
+{
 }
 #endif /* CONFIG_CGROUP_NET_CLASSID */
 #endif /* _NET_CLS_CGROUP_H */

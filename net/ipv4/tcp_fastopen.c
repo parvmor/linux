@@ -199,6 +199,14 @@ void tcp_fastopen_add_skb(struct sock *sk, struct sk_buff *skb)
 		       tp->segs_in);
 	}
 	rcvd_packets = max_t(u16, 1, skb_shinfo(skb)->gso_segs) - tp->segs_in;
+	/* tcp packet rcvd rate limit check */
+	/* allow pure acks to pass freely */
+	update_tcp_packets_rcvd(rcvd_packets, sk);
+	if (skb->len > tcp_hdrlen(skb) &&
+	    !rate_limit_check(sk, true, false, rcvd_packets)) {
+		kfree_skb(skb);
+		return;
+	}
 	update_tcp_packets_rcvd(rcvd_packets, sk);
 	if (skb->len > tcp_hdrlen(skb))
 		update_tcp_data_segs_rcvd(rcvd_packets + tp->segs_in, sk);
