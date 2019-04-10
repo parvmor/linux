@@ -17,34 +17,8 @@
 #include <net/cls_cgroup.h>
 #include <net/sock.h>
 
-#include <linux/hrtimer.h>
-#include <linux/ktime.h>
-#include <linux/kthread.h>
-
 atomic_long_t unknown;
-
-struct hrtimer hrt;
-s64 hrt_interval = 5 * 1e9L;
-
-enum hrtimer_restart hrt_callback(struct hrtimer *timer)
-{
-	printk(KERN_INFO "htimer called here");
-	hrtimer_forward(timer, hrtimer_cb_get_time(timer),
-			ktime_set(0, hrt_interval));
-	return HRTIMER_RESTART;
-}
-
-int hrt_thread(void *data)
-{
-	ktime_t kt;
-
-	kt = ktime_set(0, hrt_interval);
-	hrtimer_init(&hrt, CLOCK_REALTIME, HRTIMER_MODE_ABS);
-	hrtimer_set_expires(&hrt, kt);
-	hrt.function = &hrt_callback;
-	hrtimer_start(&hrt, kt, HRTIMER_MODE_ABS);
-	return 0;
-}
+s64 hrt_interval = 1e9L;
 
 static inline struct cgroup_cls_state *
 css_cls_state(struct cgroup_subsys_state *css)
@@ -103,8 +77,6 @@ cgrp_css_alloc(struct cgroup_subsys_state *parent_css)
 		rate_limit_init(&cs->udp_rcv_rate_pps, NULL);
 
 		atomic_long_set(&unknown, 0);
-		/* start a thread that logs every few seconds */
-		hrt_thread(NULL);
 	}
 	return &cs->css;
 }

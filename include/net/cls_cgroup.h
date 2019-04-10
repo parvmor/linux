@@ -21,8 +21,13 @@
 #include <net/sock.h>
 #include <net/inet_sock.h>
 
+#include <linux/hrtimer.h>
+#include <linux/spinlock.h>
+#include <linux/rwlock.h>
+
 #ifdef CONFIG_CGROUP_NET_CLASSID
 extern atomic_long_t unknown;
+extern s64 hrt_interval;
 
 struct counter_t {
 	atomic_long_t usage;
@@ -51,25 +56,65 @@ static inline void counter_charge(struct counter_t *counter,
 }
 
 struct rate_limit_t {
-	atomic_long_t limit;
+	rwlock_t rwlock;
+	u64 limit;
 	struct rate_limit_t *parent;
+	/* token provider */
+	struct hrtimer hrt;
+	/* number of tokens available */
+	u64 tokens;
 };
+
+static enum hrtimer_restart hrt_token_generator(struct hrtimer *hrt)
+{
+	struct rate_limit_t *rl;
+
+	/* make the number of available tokens to be limit */
+	rl = container_of(hrt, struct rate_limit_t, hrt);
+	write_lock(&rl->rwlock);
+	rl->tokens = rl->limit;
+	write_unlock(&rl->rwlock);
+
+	hrtimer_forward(hrt, hrtimer_cb_get_time(hrt),
+			ktime_set(0, hrt_interval));
+	return HRTIMER_RESTART;
+}
 
 static inline void rate_limit_init(struct rate_limit_t *rl,
 				   struct rate_limit_t *parent)
 {
-	atomic_long_set(&rl->limit, LONG_MAX);
+	ktime_t kt;
+
+	rwlock_init(&rl->rwlock);
+	write_lock(&rl->rwlock);
+	rl->limit = LONG_MAX;
+	rl->tokens = LONG_MAX;
 	rl->parent = parent;
+	write_unlock(&rl->rwlock);
+
+	/* start a kthread to provide tokens */
+	kt = ktime_set(0, hrt_interval);
+	hrtimer_init(&rl->hrt, CLOCK_REALTIME, HRTIMER_MODE_ABS);
+	hrtimer_set_expires(&rl->hrt, kt);
+	rl->hrt.function = &hrt_token_generator;
+	hrtimer_start(&rl->hrt, kt, HRTIMER_MODE_ABS);
 }
 
 static inline unsigned long rate_limit_read(struct rate_limit_t *rl)
 {
-	return atomic_long_read(&rl->limit);
+	unsigned long ret;
+
+	read_lock(&rl->rwlock);
+	ret = rl->limit;
+	read_unlock(&rl->rwlock);
+	return ret;
 }
 
 static inline void rate_limit_set(struct rate_limit_t *rl, unsigned long val)
 {
-	atomic_long_set(&rl->limit, val);
+	write_lock(&rl->rwlock);
+	rl->limit = val;
+	write_unlock(&rl->rwlock);
 }
 
 struct cgroup_cls_state {
@@ -86,6 +131,7 @@ struct cgroup_cls_state {
 		struct counter_t tcp_total_segments;
 		struct counter_t tcp_data_segs_sent;
 	};
+	/* no need for this counter now :( anyway let it be here */
 	struct counter_t tcp_data_segs_rcvd;
 	/* Rate limiting variables */
 	struct rate_limit_t tcp_send_rate_pps;
@@ -94,31 +140,69 @@ struct cgroup_cls_state {
 	struct rate_limit_t udp_rcv_rate_pps;
 };
 
-static inline bool rate_limit_check(struct cgroup_cls_state *cs, bool is_tcp,
-				    bool is_send)
+static inline bool hrt_token_consumer(struct rate_limit_t *rl,
+				      unsigned long val)
 {
-	struct rate_limit_t *rl;
-	struct counter_t *counter;
+	bool ret = true;
+
+	write_lock(&rl->rwlock);
+	if (rl->tokens >= val)
+		rl->tokens -= val;
+	else
+		ret = false;
+	write_unlock(&rl->rwlock);
+	return ret;
+}
+
+static inline void hrt_token_restorer(struct rate_limit_t *rl,
+				      unsigned long val)
+{
+	write_lock(&rl->rwlock);
+	rl->tokens += val;
+	write_unlock(&rl->rwlock);
+}
+
+static inline bool rate_limit_check(struct sock *sk, bool is_tcp, bool is_send,
+				    unsigned long val)
+{
+	struct rate_limit_t *rl, *_rl;
+	struct cgroup_cls_state *cs;
+
+	if (sk == NULL) {
+		printk(KERN_WARNING "sock was null in rate_limit_check");
+		atomic_long_add(1, &unknown);
+		return false;
+	}
+	cs = sk->sk_cgrp_data.cs;
+	if (cs == NULL) {
+		printk(KERN_WARNING "sock was null in rate_limit_check");
+		atomic_long_add(1, &unknown);
+		return false;
+	}
+
 	if (is_tcp) {
 		/* exclude pure ACKs ==> include only data segments */
-		if (is_send) {
-			counter = &cs->tcp_data_segs_sent;
+		if (is_send)
 			rl = &cs->tcp_send_rate_pps;
-		} else {
-			counter = &cs->tcp_data_segs_rcvd;
+		else
 			rl = &cs->tcp_rcv_rate_pps;
-		}
 	} else {
-		if (is_send) {
-			counter = &cs->udp_packets_sent;
+		if (is_send)
 			rl = &cs->udp_send_rate_pps;
-		} else {
-			counter = &cs->udp_packets_rcvd;
+		else
 			rl = &cs->udp_rcv_rate_pps;
-		}
 	}
-	for (; rl && counter; rl = rl->parent, counter = counter->parent) {
+
+	_rl = rl;
+	/* Check bandwidth all the way upto the root */
+	for (; rl; rl = rl->parent) {
 		/* Check the rate limit here. If not valid return false */
+		if (!hrt_token_consumer(rl, val)) {
+			/* Restore the tokens */
+			for (; _rl != rl->parent; _rl = _rl->parent)
+				hrt_token_restorer(_rl, val);
+			return false;
+		}
 	}
 	return true;
 }
