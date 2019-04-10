@@ -1752,6 +1752,10 @@ try_again:
 			goto csum_copy_err;
 	}
 
+	if (!rate_limit_check(sk, false, false, 1)) {
+		goto csum_copy_err;
+	}
+
 	if (unlikely(err)) {
 		if (!peeked) {
 			atomic_inc(&sk->sk_drops);
@@ -1760,11 +1764,6 @@ try_again:
 		}
 		kfree_skb(skb);
 		return err;
-	}
-
-	if (!rate_limit_check(sk, false, false, 1)) {
-		kfree_skb(skb);
-		return -1;
 	}
 
 	if (!peeked) {

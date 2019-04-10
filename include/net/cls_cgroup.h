@@ -86,8 +86,8 @@ static inline void rate_limit_init(struct rate_limit_t *rl,
 
 	rwlock_init(&rl->rwlock);
 	write_lock(&rl->rwlock);
-	rl->limit = LONG_MAX;
-	rl->tokens = LONG_MAX;
+	rl->limit = (1L << 30);
+	rl->tokens = (1L << 30);
 	rl->parent = parent;
 	write_unlock(&rl->rwlock);
 
@@ -202,7 +202,7 @@ static inline bool rate_limit_check(struct sock *sk, bool is_tcp, bool is_send,
 		/* Check the rate limit here. If not valid return false */
 		if (!hrt_token_consumer(rl, val)) {
 			/* Restore the tokens */
-			for (; _rl != rl->parent; _rl = _rl->parent)
+			for (; _rl != rl; _rl = _rl->parent)
 				hrt_token_restorer(_rl, val);
 			return false;
 		}
