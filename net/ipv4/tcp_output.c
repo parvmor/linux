@@ -1144,23 +1144,28 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 		TCP_ADD_STATS(sock_net(sk), TCP_MIB_OUTSEGS,
 			      tcp_skb_pcount(skb));
 
-	/* Actual number of segments sent */
-	tp->segs_out += tcp_skb_pcount(skb);
-	/* Update our stats here */
-	update_tcp_packets_sent(tcp_skb_pcount(skb), sk);
+	/* tcp packet send rate limit check */
+	if (rate_limit_check(sk, true, true, tcp_skb_pcount(skb))) {
+		/* Actual number of segments sent */
+		tp->segs_out += tcp_skb_pcount(skb);
+		/* Update our stats here */
+		update_tcp_packets_sent(tcp_skb_pcount(skb), sk);
 
-	/* OK, its time to fill skb_shinfo(skb)->gso_{segs|size} */
-	skb_shinfo(skb)->gso_segs = tcp_skb_pcount(skb);
-	skb_shinfo(skb)->gso_size = tcp_skb_mss(skb);
+		/* OK, its time to fill skb_shinfo(skb)->gso_{segs|size} */
+		skb_shinfo(skb)->gso_segs = tcp_skb_pcount(skb);
+		skb_shinfo(skb)->gso_size = tcp_skb_mss(skb);
 
-	/* Leave earliest departure time in skb->tstamp (skb->skb_mstamp_ns) */
+		/* Leave earliest departure time in skb->tstamp (skb->skb_mstamp_ns) */
 
-	/* Cleanup our debris for IP stacks */
-	memset(skb->cb, 0,
-	       max(sizeof(struct inet_skb_parm),
-		   sizeof(struct inet6_skb_parm)));
+		/* Cleanup our debris for IP stacks */
+		memset(skb->cb, 0,
+		       max(sizeof(struct inet_skb_parm),
+			   sizeof(struct inet6_skb_parm)));
 
-	err = icsk->icsk_af_ops->queue_xmit(sk, skb, &inet->cork.fl);
+		err = icsk->icsk_af_ops->queue_xmit(sk, skb, &inet->cork.fl);
+	} else {
+		err = 1;
+	}
 
 	if (unlikely(err > 0)) {
 		tcp_enter_cwr(sk);
