@@ -17,27 +17,60 @@
 #include <net/cls_cgroup.h>
 #include <net/sock.h>
 
-static inline struct cgroup_cls_state *css_cls_state(struct cgroup_subsys_state *css)
+/**
+ * TODO: check if lxc/ variables are summation of
+ * lxc/<container>/ variables. They should be!
+ * If not we need to update them manually.
+ */
+
+static void counter_charge(struct counter_t *counter, unsigned long value)
+{
+	struct counter_t *c;
+	for (c = counter; c; c = c->parent) {
+		atomic_long_add(value, &c->usage);
+	}
+}
+
+static inline struct cgroup_cls_state *
+css_cls_state(struct cgroup_subsys_state *css)
 {
 	return css ? container_of(css, struct cgroup_cls_state, css) : NULL;
 }
 
 struct cgroup_cls_state *task_cls_state(struct task_struct *p)
 {
-	return css_cls_state(task_css_check(p, net_cls_cgrp_id,
-					    rcu_read_lock_bh_held()));
+	return css_cls_state(
+		task_css_check(p, net_cls_cgrp_id, rcu_read_lock_bh_held()));
 }
 EXPORT_SYMBOL_GPL(task_cls_state);
 
 static struct cgroup_subsys_state *
 cgrp_css_alloc(struct cgroup_subsys_state *parent_css)
 {
+	struct cgroup_cls_state *parent = css_cls_state(parent_css);
 	struct cgroup_cls_state *cs;
 
 	cs = kzalloc(sizeof(*cs), GFP_KERNEL);
 	if (!cs)
 		return ERR_PTR(-ENOMEM);
 
+	if (parent) {
+		counter_init(&cs->tcp_packets_sent, &parent->tcp_packets_sent);
+		counter_init(&cs->tcp_packets_rcvd, &parent->tcp_packets_rcvd);
+		counter_init(&cs->udp_packets_sent, &parent->udp_packets_sent);
+		counter_init(&cs->udp_packets_rcvd, &parent->udp_packets_rcvd);
+		counter_init(&cs->tcp_total_segment_size,
+			     &parent->tcp_total_segment_size);
+		counter_init(&cs->tcp_total_segments,
+			     &parent->tcp_total_segments);
+	} else {
+		counter_init(&cs->tcp_packets_sent, NULL);
+		counter_init(&cs->tcp_packets_rcvd, NULL);
+		counter_init(&cs->udp_packets_sent, NULL);
+		counter_init(&cs->udp_packets_rcvd, NULL);
+		counter_init(&cs->tcp_total_segment_size, NULL);
+		counter_init(&cs->tcp_total_segments, NULL);
+	}
 	return &cs->css;
 }
 
@@ -76,7 +109,7 @@ static void cgrp_attach(struct cgroup_taskset *tset)
 	struct cgroup_subsys_state *css;
 	struct task_struct *p;
 
-	cgroup_taskset_for_each(p, css, tset) {
+	cgroup_taskset_for_each (p, css, tset) {
 		task_lock(p);
 		iterate_fd(p->files, 0, update_classid_sock,
 			   (void *)(unsigned long)css_cls_state(css)->classid);
@@ -113,19 +146,74 @@ static int write_classid(struct cgroup_subsys_state *css, struct cftype *cft,
 	return 0;
 }
 
+static u64 read_tcp_packets_sent(struct cgroup_subsys_state *css,
+				 struct cftype *cft)
+{
+	return counter_read(&css_cls_state(css)->tcp_packets_sent);
+}
+
+static u64 read_tcp_packets_rcvd(struct cgroup_subsys_state *css,
+				 struct cftype *cft)
+{
+	return counter_read(&css_cls_state(css)->tcp_packets_rcvd);
+}
+
+static u64 read_udp_packets_sent(struct cgroup_subsys_state *css,
+				 struct cftype *cft)
+{
+	return counter_read(&css_cls_state(css)->udp_packets_sent);
+}
+
+static u64 read_udp_packets_rcvd(struct cgroup_subsys_state *css,
+				 struct cftype *cft)
+{
+	return counter_read(&css_cls_state(css)->udp_packets_rcvd);
+}
+
+static u64 read_avg_tcp_segment_size(struct cgroup_subsys_state *css,
+				     struct cftype *cft)
+{
+	struct cgroup_cls_state *cls_state = css_cls_state(css);
+	unsigned long num = counter_read(&cls_state->tcp_total_segment_size);
+	unsigned long den = counter_read(&cls_state->tcp_total_segments);
+	if (den == 0)
+		return 0;
+	return num / den;
+}
+
 static struct cftype ss_files[] = {
 	{
-		.name		= "classid",
-		.read_u64	= read_classid,
-		.write_u64	= write_classid,
+		.name = "classid",
+		.read_u64 = read_classid,
+		.write_u64 = write_classid,
 	},
-	{ }	/* terminate */
+	{
+		.name = "tcp_packets_sent",
+		.read_u64 = read_tcp_packets_sent,
+	},
+	{
+		.name = "tcp_packets_rcvd",
+		.read_u64 = read_tcp_packets_rcvd,
+	},
+	{
+		.name = "udp_packets_sent",
+		.read_u64 = read_udp_packets_sent,
+	},
+	{
+		.name = "udp_packets_rcvd",
+		.read_u64 = read_udp_packets_rcvd,
+	},
+	{
+		.name = "avg_tcp_segment_size",
+		.read_u64 = read_avg_tcp_segment_size,
+	},
+	{} /* terminate */
 };
 
 struct cgroup_subsys net_cls_cgrp_subsys = {
-	.css_alloc		= cgrp_css_alloc,
-	.css_online		= cgrp_css_online,
-	.css_free		= cgrp_css_free,
-	.attach			= cgrp_attach,
-	.legacy_cftypes		= ss_files,
+	.css_alloc = cgrp_css_alloc,
+	.css_online = cgrp_css_online,
+	.css_free = cgrp_css_free,
+	.attach = cgrp_attach,
+	.legacy_cftypes = ss_files,
 };

@@ -13,6 +13,8 @@
 #ifndef _NET_CLS_CGROUP_H
 #define _NET_CLS_CGROUP_H
 
+#include <linux/atomic.h>
+#include <linux/kernel.h>
 #include <linux/cgroup.h>
 #include <linux/hardirq.h>
 #include <linux/rcupdate.h>
@@ -20,9 +22,34 @@
 #include <net/inet_sock.h>
 
 #ifdef CONFIG_CGROUP_NET_CLASSID
+struct counter_t {
+	atomic_long_t usage;
+	struct counter_t *parent;
+};
+
+static inline void counter_init(struct counter_t *counter,
+				struct counter_t *parent)
+{
+	atomic_long_set(&counter->usage, 0);
+	counter->parent = parent;
+}
+
+static inline unsigned long counter_read(struct counter_t *counter)
+{
+	return atomic_long_read(&counter->usage);
+}
+
 struct cgroup_cls_state {
 	struct cgroup_subsys_state css;
 	u32 classid;
+	/* Accounts for both data and ack segments */
+	struct counter_t tcp_packets_sent;
+	struct counter_t tcp_packets_rcvd;
+	struct counter_t udp_packets_sent;
+	struct counter_t udp_packets_rcvd;
+	/* Accounts only for data segments */
+	struct counter_t tcp_total_segment_size;
+	struct counter_t tcp_total_segments;
 };
 
 struct cgroup_cls_state *task_cls_state(struct task_struct *p);
@@ -36,7 +63,8 @@ static inline u32 task_cls_classid(struct task_struct *p)
 
 	rcu_read_lock();
 	classid = container_of(task_css(p, net_cls_cgrp_id),
-			       struct cgroup_cls_state, css)->classid;
+			       struct cgroup_cls_state, css)
+			  ->classid;
 	rcu_read_unlock();
 
 	return classid;
@@ -85,4 +113,4 @@ static inline u32 task_get_classid(const struct sk_buff *skb)
 	return 0;
 }
 #endif /* CONFIG_CGROUP_NET_CLASSID */
-#endif  /* _NET_CLS_CGROUP_H */
+#endif /* _NET_CLS_CGROUP_H */
