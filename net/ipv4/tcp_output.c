@@ -1134,17 +1134,21 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 
 	if (skb->len != tcp_header_size) {
 		tcp_event_data_sent(tp, sk);
+		update_tcp_total_segments(tcp_skb_pcount(skb), sk);
+		update_tcp_total_segment_size(skb->len - tcp_header_size, sk);
 		tp->data_segs_out += tcp_skb_pcount(skb);
 		tp->bytes_sent += skb->len - tcp_header_size;
 	}
 
-	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq) {
-		update_tcp_packets_sent(tcp_skb_pcount(skb));
+	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq)
 		TCP_ADD_STATS(sock_net(sk), TCP_MIB_OUTSEGS,
 			      tcp_skb_pcount(skb));
-	}
 
+	/* Actual number of segments sent */
 	tp->segs_out += tcp_skb_pcount(skb);
+	/* Update our stats here */
+	update_tcp_packets_sent(tcp_skb_pcount(skb), sk);
+
 	/* OK, its time to fill skb_shinfo(skb)->gso_{segs|size} */
 	skb_shinfo(skb)->gso_segs = tcp_skb_pcount(skb);
 	skb_shinfo(skb)->gso_size = tcp_skb_mss(skb);
@@ -3292,7 +3296,6 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	th->window = htons(min(req->rsk_rcv_wnd, 65535U));
 	tcp_options_write((__be32 *)(th + 1), NULL, &opts);
 	th->doff = (tcp_header_size >> 2);
-	update_tcp_packets_sent(1);
 	__TCP_INC_STATS(sock_net(sk), TCP_MIB_OUTSEGS);
 
 #ifdef CONFIG_TCP_MD5SIG

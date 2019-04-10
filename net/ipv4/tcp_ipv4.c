@@ -776,7 +776,6 @@ static void tcp_v4_send_reset(const struct sock *sk, struct sk_buff *skb)
 			      arg.iov[0].iov_len);
 
 	ctl_sk->sk_mark = 0;
-	update_tcp_packets_sent(1);
 	__TCP_INC_STATS(net, TCP_MIB_OUTSEGS);
 	__TCP_INC_STATS(net, TCP_MIB_OUTRSTS);
 	local_bh_enable();
@@ -865,7 +864,6 @@ static void tcp_v4_send_ack(const struct sock *sk, struct sk_buff *skb, u32 seq,
 			      arg.iov[0].iov_len);
 
 	ctl_sk->sk_mark = 0;
-	update_tcp_packets_sent(1);
 	__TCP_INC_STATS(net, TCP_MIB_OUTSEGS);
 	local_bh_enable();
 }
@@ -1764,12 +1762,12 @@ int tcp_v4_rcv(struct sk_buff *skb)
 	bool refcounted;
 	struct sock *sk;
 	int ret;
+	unsigned long rcvd_packets;
 
 	if (skb->pkt_type != PACKET_HOST)
 		goto discard_it;
 
 	/* Count it even if it's bad */
-	update_tcp_packets_rcvd(1);
 	__TCP_INC_STATS(net, TCP_MIB_INSEGS);
 
 	if (!pskb_may_pull(skb, sizeof(struct tcphdr)))
@@ -1887,6 +1885,10 @@ process:
 	sk_incoming_cpu_update(sk);
 
 	bh_lock_sock_nested(sk);
+	rcvd_packets = max_t(u16, 1, skb_shinfo(skb)->gso_segs);
+	update_tcp_packets_rcvd(rcvd_packets, sk);
+	if (skb->len > tcp_hdrlen(skb))
+		update_tcp_data_segs_rcvd(rcvd_packets, sk);
 	tcp_segs_in(tcp_sk(sk), skb);
 	ret = 0;
 	if (!sock_owned_by_user(sk)) {

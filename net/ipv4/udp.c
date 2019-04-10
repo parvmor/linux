@@ -898,7 +898,7 @@ send:
 			err = 0;
 		}
 	} else {
-		update_udp_packets_sent(1);
+		update_udp_packets_sent(1, sk);
 		UDP_INC_STATS(sock_net(sk), UDP_MIB_OUTDATAGRAMS, is_udplite);
 	}
 	return err;
@@ -1760,7 +1760,7 @@ try_again:
 	}
 
 	if (!peeked) {
-		update_udp_packets_rcvd(1);
+		update_udp_packets_rcvd(1, sk);
 		UDP_INC_STATS(sock_net(sk), UDP_MIB_INDATAGRAMS, is_udplite);
 	}
 
@@ -2001,7 +2001,7 @@ static int udp_queue_rcv_one_skb(struct sock *sk, struct sk_buff *skb)
 
 			ret = encap_rcv(sk, skb);
 			if (ret <= 0) {
-				update_udp_packets_rcvd(1);
+				update_udp_packets_rcvd(1, sk);
 				__UDP_INC_STATS(sock_net(sk),
 						UDP_MIB_INDATAGRAMS,
 						is_udplite);
