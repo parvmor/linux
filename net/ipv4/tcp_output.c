@@ -45,6 +45,8 @@
 
 #include <trace/events/tcp.h>
 
+#include <net/cls_cgroup.h>
+
 /* Refresh clocks of a TCP socket,
  * ensuring monotically increasing values.
  */
@@ -1136,11 +1138,12 @@ static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
 		tp->bytes_sent += skb->len - tcp_header_size;
 	}
 
-	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq)
+	if (after(tcb->end_seq, tp->snd_nxt) || tcb->seq == tcb->end_seq) {
+		update_tcp_packets_sent(tcp_skb_pcount(skb));
 		TCP_ADD_STATS(sock_net(sk), TCP_MIB_OUTSEGS,
 			      tcp_skb_pcount(skb));
+	}
 
-	update_tcp_packets_sent(tcp_skb_pcount(skb));
 	tp->segs_out += tcp_skb_pcount(skb);
 	/* OK, its time to fill skb_shinfo(skb)->gso_{segs|size} */
 	skb_shinfo(skb)->gso_segs = tcp_skb_pcount(skb);
@@ -3289,6 +3292,7 @@ struct sk_buff *tcp_make_synack(const struct sock *sk, struct dst_entry *dst,
 	th->window = htons(min(req->rsk_rcv_wnd, 65535U));
 	tcp_options_write((__be32 *)(th + 1), NULL, &opts);
 	th->doff = (tcp_header_size >> 2);
+	update_tcp_packets_sent(1);
 	__TCP_INC_STATS(sock_net(sk), TCP_MIB_OUTSEGS);
 
 #ifdef CONFIG_TCP_MD5SIG
