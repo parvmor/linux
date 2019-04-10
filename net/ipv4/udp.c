@@ -891,7 +891,8 @@ static int udp_send_skb(struct sk_buff *skb, struct flowi4 *fl4,
 
 send:
 	if (!rate_limit_check(sk, false, true, 1)) {
-		return -1;
+		kfree_skb(skb);
+		return 0;
 	}
 	err = ip_send_skb(sock_net(sk), skb);
 	if (err) {
