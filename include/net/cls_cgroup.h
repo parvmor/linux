@@ -39,6 +39,15 @@ static inline unsigned long counter_read(struct counter_t *counter)
 	return atomic_long_read(&counter->usage);
 }
 
+static inline void counter_charge(struct counter_t *counter,
+				  unsigned long value)
+{
+	struct counter_t *c;
+	for (c = counter; c; c = c->parent) {
+		atomic_long_add(value, &c->usage);
+	}
+}
+
 struct cgroup_cls_state {
 	struct cgroup_subsys_state css;
 	u32 classid;
@@ -76,6 +85,42 @@ static inline void sock_update_classid(struct sock_cgroup_data *skcd)
 
 	classid = task_cls_classid(current);
 	sock_cgroup_set_classid(skcd, classid);
+}
+
+static inline void update_tcp_packets_sent(unsigned long val)
+{
+	struct cgroup_cls_state *cs = task_cls_state(current);
+	counter_charge(&cs->tcp_packets_sent, val);
+}
+
+static inline void update_tcp_packets_rcvd(unsigned long val)
+{
+	struct cgroup_cls_state *cs = task_cls_state(current);
+	counter_charge(&cs->tcp_packets_rcvd, val);
+}
+
+static inline void update_udp_packets_sent(unsigned long val)
+{
+	struct cgroup_cls_state *cs = task_cls_state(current);
+	counter_charge(&cs->udp_packets_sent, val);
+}
+
+static inline void update_udp_packets_rcvd(unsigned long val)
+{
+	struct cgroup_cls_state *cs = task_cls_state(current);
+	counter_charge(&cs->udp_packets_rcvd, val);
+}
+
+static inline void update_tcp_total_segment_size(unsigned long val)
+{
+	struct cgroup_cls_state *cs = task_cls_state(current);
+	counter_charge(&cs->tcp_total_segment_size, val);
+}
+
+static inline void update_tcp_total_segments(unsigned long val)
+{
+	struct cgroup_cls_state *cs = task_cls_state(current);
+	counter_charge(&cs->tcp_total_segments, val);
 }
 
 static inline u32 task_get_classid(const struct sk_buff *skb)

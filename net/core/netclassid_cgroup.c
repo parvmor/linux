@@ -23,14 +23,6 @@
  * If not we need to update them manually.
  */
 
-static void counter_charge(struct counter_t *counter, unsigned long value)
-{
-	struct counter_t *c;
-	for (c = counter; c; c = c->parent) {
-		atomic_long_add(value, &c->usage);
-	}
-}
-
 static inline struct cgroup_cls_state *
 css_cls_state(struct cgroup_subsys_state *css)
 {
